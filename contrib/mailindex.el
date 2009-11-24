@@ -34,19 +34,17 @@
       (sit-for 0.1))
     (mapcar (lambda (entry)
               (vector
-               (concat server (aref entry 0))
-               (parse-integer (aref entry 1))
+               (concat "nnimap+Mail:" (aref entry 0))
+               (string-to-number (aref entry 1))
                (aref entry 2)))
             (car (ignore-errors (read-from-string result))))))
-
 
 (push '(mst nnir-run-mst-search nil)
       nnir-engines)
 
 (setq nnir-search-engine 'mst)
 
-
-
+;; (nnir-run-mst-search '((query . "from:mark")) nil nil)
 
 (provide 'mailindex)
 ;;; mailindex.el ends here

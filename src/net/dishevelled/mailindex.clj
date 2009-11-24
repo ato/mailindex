@@ -137,30 +137,53 @@
 	(.add doc (tokenized-field field value)))))
   doc)
 
+(defn read-uidlist* [dir]
+  (with-open [rdr (reader (File. dir "../dovecot-uidlist"))]
+    (into
+     {}
+     (for [line (rest (line-seq rdr))
+           :let [[_ num fn] (re-matches #"(\d+) :([^:]+):2.*" line)]]
+       [fn  num]))))
+
+(def uidlist-cache (atom {}))
+
+(defn read-uidlist [dir]
+  (if-let [uidlist (@uidlist-cache dir)]
+    uidlist
+    (when-let [uidlist (read-uidlist* dir)]
+      (swap! uidlist-cache assoc dir uidlist)
+      uidlist)))
 
 (defn parse-message [#^String filename basedir]
   "Produce a Lucene document from an mbox file containing a single message."
   (let [#^Document doc (Document.)
-        [whole group num]
+        [whole group fn]
         (first
-         (re-seq (re-pattern (str basedir "/*" "(.*?)" "/" "([0-9]+)$"))
-                 filename))]
+         (re-seq (re-pattern (str basedir "/*" "\\.(.*?)" "/cur/"
+                                  "([^:/]+):2.*$"))
+                 filename))
+        num ((read-uidlist (.getParent (File. filename))) fn)
+        group (if (empty? group) "INBOX" group)]
 
-    (.add doc (stored-field "filename" filename))
-    (.add doc (stored-field "num" num))
-    (.add doc (stored-field "group" group))
-    (.add doc (stored-field "id" (format "%s@%s" num group)))
+    (if num
+      (do
+        (.add doc (stored-field "filename" filename))
+        (.add doc (stored-field "num" num))
+        (.add doc (stored-field "group" group))
+        (.add doc (stored-field "id" (format "%s@%s" num group)))
 
-    (with-open [rdr (reader (File. filename))]
-      (load-headers doc (take-while #(not= % "") (line-seq rdr)))
-      (load-body doc (drop-while #(not= % "") (line-seq rdr))))))
-
-
+        (with-open [rdr (reader (File. filename))]
+          (load-headers doc (take-while #(not= % "") (line-seq rdr)))
+          (load-body doc (drop-while #(not= % "") (line-seq rdr)))))
+      ;;
+      ;; FIXME: dovecot may not have given this mesage an ID yet
+      ;; what should we do?
+      ;;
+     (throw (java.io.FileNotFoundException. "couldn't find a dovecot uid")))))
 
 (defn index-message [#^IndexWriter writer msg]
   "Index a message and add it to an IndexWriter."
   (.updateDocument writer (Term. "id" (get-field msg "id")) msg))
-
 
 (defn index-age [indexfile]
   "Return the mtime of an index."
@@ -171,12 +194,11 @@
       (inc (int (/ (- now index-mtime) 1000 60 60 24)))
       nil)))
 
-
 (defn find-updates [basedir offset]
   "Find any messages that have been updated in the last `offset' days."
   (let [cmd ["find" basedir "-type" "f"]
         cmd (if offset (concat cmd ["-mtime" (str "-" offset)]) cmd)]
-    (set (filter #(re-find #"/[0-9]+$" %)
+    (set (filter #(re-find #"INBOX.*:2[^/]*$" %)
                  (line-seq (reader (.. Runtime
                                        getRuntime
                                        (exec (into-array cmd))
@@ -252,6 +274,7 @@ Any paths contained in `seen-messages' are skipped."
        (clojure.set/union updates seen-messages)))
    (catch Exception e
      (.println System/err (str "Agent got exception: " e))
+     (.printStackTrace e)
      seen-messages)))
 
 
@@ -352,6 +375,7 @@ matching documents."
        (.println out (prn-str (search indexfile (first (line-seq in)))))
      (.flush out))
    (catch Exception e
+     (.printStackTrace e)
      (.println System/err e)))
   (send-off *agent* handle-searches indexfile port))
 
