@@ -12,7 +12,7 @@
            (org.apache.lucene.store FSDirectory)
            (org.apache.lucene.queryParser QueryParser$Operator
                                           MultiFieldQueryParser)
-           (java.net ServerSocket)
+           (java.net ServerSocket InetAddress)
            (java.util Calendar Date SimpleTimeZone Vector)
            (java.text SimpleDateFormat)
            (java.io File))
@@ -359,7 +359,7 @@ matching documents."
 (defn handle-searches [state indexfile port]
   "Kick off the search handler."
   (try
-   (with-open [server (ServerSocket. port)
+   (with-open [server (ServerSocket. port 50 (InetAddress/getLocalHost))
                client (.accept server)
                in (reader (.getInputStream client))
                out (writer (.getOutputStream client))]
